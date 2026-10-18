@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cuffless BP Estimation - Prototype UI</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Final Year Project Prototype</p>
+        <h1>Cuffless Blood Pressure Estimation</h1>
+        <p class="subtitle">
+          PPG &rarr; Butterworth &rarr; PPG/vPPG/aPPG &rarr; ResNet-50 &rarr; MHCA &rarr; SBP/DBP
+        </p>
+      </div>
+      <div class="status" id="statusBadge">Not connected</div>
+    </header>
+
+    <section class="panel controls">
+      <h2>Run Pipeline</h2>
+      <div class="grid">
+        <label>API Base URL
+          <input id="apiBase" type="text" value="http://127.0.0.1:8000" />
+        </label>
+        <label>Sampling Rate (Hz)
+          <input id="fs" type="number" value="125" step="1" min="32" />
+        </label>
+        <label>Heart Rate (bpm)
+          <input id="hr" type="number" value="72" step="1" min="30" max="220" />
+        </label>
+        <label>Optional Signal File (.csv/.txt)
+          <input id="file" type="file" accept=".csv,.txt,.tsv" />
+        </label>
+      </div>
+      <div class="actions">
+        <button id="btnHealth">Check Backend</button>
+        <button id="btnDemo" class="primary">Run Demo Pipeline</button>
+        <button id="btnPredict">Run Predict Pipeline</button>
+      </div>
+      <p class="hint" id="runInfo">Start the backend first: <code>uvicorn main:app --reload --port 8000</code></p>
+    </section>
+
+    <section class="panel" id="predictionPanel">
+      <h2>Prediction</h2>
+      <div class="prediction-grid">
+        <div class="metric"><span>SBP</span><strong id="sbp">--</strong><small>mmHg</small></div>
+        <div class="metric"><span>DBP</span><strong id="dbp">--</strong><small>mmHg</small></div>
+        <div class="metric"><span>MAP</span><strong id="map">--</strong><small>mmHg</small></div>
+        <div class="metric"><span>Pulse Pressure</span><strong id="pp">--</strong><small>mmHg</small></div>
+      </div>
+      <div class="meta-row">
+        <span id="modeText">Mode: --</span>
+        <span id="sourceText">Source: --</span>
+        <span id="confidenceText">Confidence: --</span>
+        <span id="categoryText">Category: --</span>
+      </div>
+      <div class="disclaimer" id="disclaimer"></div>
+    </section>
+
+    <section class="panel" id="stagesPanel">
+      <h2>Pipeline Stages</h2>
+      <ul class="stage-list" id="stages"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>Extracted Features</h2>
+      <div class="feature-grid" id="features"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Signal Forms</h2>
+      <div class="charts-grid">
+        <div class="chart-box"><h3>Raw PPG</h3><canvas id="cRaw"></canvas></div>
+        <div class="chart-box"><h3>Filtered PPG</h3><canvas id="cFiltered"></canvas></div>
+        <div class="chart-box"><h3>vPPG</h3><canvas id="cVppg"></canvas></div>
+        <div class="chart-box"><h3>aPPG</h3><canvas id="cAppg"></canvas></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Signal-to-Image (STFT Spectrograms)</h2>
+      <div class="image-grid" id="images"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Attention (MHCA)</h2>
+      <div id="attention" class="table-wrap"></div>
+    </section>
+
+    <footer class="footer">
+      <p>Demo data is synthetic. Not a medical device. For research/academic prototype use only.</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
