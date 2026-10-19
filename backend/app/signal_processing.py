@@ -143,9 +143,177 @@ def signal_summary(x: np.ndarray, fs: float, points: int = 320) -> dict:
 
 
 def demux(text: str) -> np.ndarray:
-    """Parse CSV / TXT / whitespace separated numeric signal data."""
+    """Parse CSV / TXT / whitespace separated numeric signal data.
+
+    Every numeric token in the file is treated as a signal sample. Non-numeric
+    tokens (headers, labels, timestamps) are ignored so a plain numeric PPG
+    file parses cleanly, but the caller is responsible for confirming that the
+    extracted values actually represent PPG samples (see validate_input).
+    """
     import re
     nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", text)
     if not nums:
         raise ValueError("No numeric samples found in the file.")
     return np.asarray([float(n) for n in nums], dtype=float)
+
+
+# ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+MIN_SAMPLES = 32          # absolute minimum for the pipeline to run
+RECOMMENDED_SAMPLES = 250 # ~2 s at 125 Hz; below this quality is questionable
+
+
+def validate_sampling_frequency(fs: float) -> None:
+    """Validate the sampling frequency; raise ValueError if unusable."""
+    if fs is None or not np.isfinite(fs):
+        raise ValueError("Sampling frequency is required and must be a number.")
+    fs = float(fs)
+    if fs <= 0:
+        raise ValueError("Sampling frequency must be greater than 0.")
+    if fs < 10:
+        raise ValueError("Sampling frequency is too low (< 10 Hz) for PPG analysis.")
+    if fs > 2000:
+        raise ValueError("Sampling frequency is implausibly high (> 2000 Hz).")
+
+
+def validate_input(raw: np.ndarray, fs: float) -> dict:
+    """Validate raw signal + sampling frequency.
+
+    Returns a dict with:
+        ok: bool
+        errors: list[str]
+        warnings: list[str]
+        n_samples: int
+        duration: float
+        missing_values: int
+    """
+    errors = []
+    warnings = []
+
+    try:
+        validate_sampling_frequency(fs)
+    except ValueError as exc:
+        return {"ok": False, "errors": [str(exc)], "warnings": [],
+                "n_samples": 0, "duration": 0.0, "missing_values": 0}
+
+    fs = float(fs)
+    arr = np.asarray(raw, dtype=float).reshape(-1)
+    total = arr.size
+    finite = arr[np.isfinite(arr)]
+    missing = int(total - finite.size)
+
+    if total == 0:
+        errors.append("The uploaded file contains no data.")
+        return {"ok": False, "errors": errors, "warnings": warnings,
+                "n_samples": 0, "duration": 0.0, "missing_values": missing}
+
+    if missing > 0:
+        warnings.append(f"{missing} non-numeric / missing sample(s) were removed.")
+
+    if finite.size < MIN_SAMPLES:
+        errors.append(
+            f"Insufficient signal samples ({finite.size}); need at least "
+            f"{MIN_SAMPLES} for processing."
+        )
+    elif finite.size < RECOMMENDED_SAMPLES:
+        warnings.append(
+            f"Short signal ({finite.size} samples, {finite.size/fs:.1f}s). "
+            "Results may be unreliable."
+        )
+
+    duration = float(finite.size / fs)
+    ok = len(errors) == 0
+    return {
+        "ok": ok,
+        "errors": errors,
+        "warnings": warnings,
+        "n_samples": int(finite.size),
+        "duration": round(duration, 3),
+        "missing_values": missing,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Signal quality assessment
+# ---------------------------------------------------------------------------
+def assess_signal_quality(filtered: np.ndarray, fs: float,
+                          appg: np.ndarray | None = None) -> dict:
+    """Assess PPG signal quality.
+
+    Technically justified checks:
+      * amplitude (flatline / clipping detection)
+      * signal-to-noise ratio (variance of detrended signal vs noise band)
+      * pulse regularity (coefficient of variation of peak-to-peak intervals)
+      * presence of clear systolic peaks in vPPG
+
+    Returns:
+        level: "good" | "needs_attention" | "insufficient"
+        score: float (0-1)
+        reasons: list[str]
+    """
+    reasons = []
+    score = 1.0
+    x = np.asarray(filtered, dtype=float)
+    x = x[np.isfinite(x)]
+
+    if x.size < MIN_SAMPLES:
+        return {"level": "insufficient", "score": 0.0,
+                "reasons": ["Signal too short for quality assessment."]}
+
+    # --- 1. Amplitude / flatline check ---
+    rng = float(np.ptp(x))
+    if rng < 1e-4:
+        return {"level": "insufficient", "score": 0.0,
+                "reasons": ["Flatline signal (no detectable amplitude)."]}
+    if rng < 0.02:
+        score -= 0.3
+        reasons.append("Very low signal amplitude (possible poor contact).")
+
+    # --- 2. Signal-to-noise ratio estimate ---
+    # Noise proxy: high-frequency content after smoothing.
+    win = max(3, int(0.05 * fs))
+    sm = uniform_filter1d(x, size=win) if win > 1 else x
+    residual = x - sm
+    signal_power = float(np.var(sm))
+    noise_power = float(np.var(residual)) + 1e-9
+    snr_db = 10.0 * np.log10(signal_power / noise_power)
+    if snr_db < 6:
+        score -= 0.3
+        reasons.append("Low signal-to-noise ratio (noisy recording).")
+    elif snr_db < 12:
+        score -= 0.1
+        reasons.append("Moderate noise level.")
+
+    # --- 3. Pulse regularity (peak-to-peak interval CV) ---
+    distance = max(1, int(0.35 * fs))
+    prominence = 0.25 * float(np.std(sm))
+    peaks, _ = find_peaks(sm, distance=distance, prominence=prominence)
+    if peaks.size >= 3:
+        intervals = np.diff(peaks) / fs
+        cv = float(np.std(intervals) / (np.mean(intervals) + 1e-9))
+        if cv > 0.25:
+            score -= 0.2
+            reasons.append("Irregular pulse intervals (motion artefact likely).")
+    else:
+        score -= 0.25
+        reasons.append("Too few clear systolic pulses detected.")
+
+    # --- 4. vPPG / aPPG derivative shape (if provided) ---
+    if appg is not None and appg.size >= MIN_SAMPLES:
+        ap = np.asarray(appg, dtype=float)
+        ap = ap[np.isfinite(ap)]
+        ap_peaks, _ = find_peaks(ap, distance=max(1, int(0.1 * fs)))
+        if ap_peaks.size < 2:
+            score -= 0.1
+            reasons.append("Weak aPPG waveform morphology.")
+
+    score = float(np.clip(score, 0.0, 1.0))
+    if score >= 0.7:
+        level = "good"
+    elif score >= 0.4:
+        level = "needs_attention"
+    else:
+        level = "insufficient"
+
+    return {"level": level, "score": round(score, 3), "reasons": reasons}

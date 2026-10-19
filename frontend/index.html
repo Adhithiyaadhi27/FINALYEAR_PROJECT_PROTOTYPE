@@ -3,98 +3,244 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cuffless BP Estimation - Prototype UI</title>
+  <title>Cuffless Blood Pressure Estimation - Prototype</title>
   <link rel="stylesheet" href="styles.css" />
+  <!-- Chart.js for waveform visualization -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
 </head>
 <body>
-  <div class="app">
-    <header class="hero">
+
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
       <div>
-        <p class="eyebrow">Final Year Project Prototype</p>
+        <p class="eyebrow">Final Year Project Prototype &bull; Phase 1</p>
         <h1>Cuffless Blood Pressure Estimation</h1>
         <p class="subtitle">
           PPG &rarr; Butterworth &rarr; PPG/vPPG/aPPG &rarr; ResNet-50 &rarr; MHCA &rarr; SBP/DBP
         </p>
       </div>
-      <div class="status" id="statusBadge">Not connected</div>
-    </header>
+      <span class="mode-chip demo" id="modeChip">
+        <span id="modeChipDot" style="width:8px;height:8px;border-radius:50%;background:var(--warn);display:inline-block;"></span>
+        Demo mode &mdash; trained model not loaded
+      </span>
+    </div>
+  </header>
 
-    <section class="panel controls">
-      <h2>Run Pipeline</h2>
-      <div class="grid">
-        <label>API Base URL
-          <input id="apiBase" type="text" value="http://127.0.0.1:8000" />
-        </label>
-        <label>Sampling Rate (Hz)
-          <input id="fs" type="number" value="125" step="1" min="32" />
-        </label>
-        <label>Heart Rate (bpm)
-          <input id="hr" type="number" value="72" step="1" min="30" max="220" />
-        </label>
-        <label>Optional Signal File (.csv/.txt)
-          <input id="file" type="file" accept=".csv,.txt,.tsv" />
-        </label>
+  <!-- Notices -->
+  <div id="noticeArea"></div>
+
+  <!-- 1. PPG Upload Section -->
+  <section class="panel" id="uploadPanel">
+    <h2>1. Upload PPG Signal</h2>
+    <p class="muted" style="margin-top:-6px;">Upload a CSV/TXT file, or paste signal values manually. Provide the sampling frequency if known.</p>
+
+    <div class="upload-grid">
+      <div>
+        <label>Signal file (.csv / .txt / .tsv)</label>
+        <input type="file" id="signalFile" accept=".csv,.txt,.tsv" />
+        <p class="small-note">Each numeric value is treated as one PPG sample. Non-numeric headers are ignored.</p>
+
+        <label style="margin-top:14px;">Sampling frequency (Hz)</label>
+        <input type="number" id="fsInput" value="100" step="1" min="10" max="2000" />
+        <p class="small-note">Dataset default: 100 Hz. Used to compute duration and filter cut-offs.</p>
+
+        <label style="margin-top:14px;">Signal column (optional)</label>
+        <input type="text" id="signalColumn" placeholder="e.g. ppg" />
+        <p class="small-note">If your file has a header, name the column here. Otherwise the first numeric column is used.</p>
+
+        <label style="margin-top:14px;">Or paste signal values manually</label>
+        <textarea id="signalText" placeholder="0.42\n0.45\n0.48\n..."></textarea>
+        <p class="small-note">Pasted values are treated as signal samples only if they pass validation.</p>
       </div>
-      <div class="actions">
-        <button id="btnHealth">Check Backend</button>
-        <button id="btnDemo" class="primary">Run Demo Pipeline</button>
-        <button id="btnPredict">Run Predict Pipeline</button>
+
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <button class="btn btn-primary btn-full" id="btnPreview">Preview Signal</button>
+        <button class="btn btn-cherry btn-full" id="btnRun">Process &amp; Estimate BP</button>
+        <button class="btn btn-ghost btn-full" id="btnDemo">Use Demo Signal</button>
+        <div id="previewArea" style="margin-top:12px;"></div>
       </div>
-      <p class="hint" id="runInfo">Start the backend first: <code>uvicorn main:app --reload --port 8000</code></p>
-    </section>
+    </div>
+  </section>
 
-    <section class="panel" id="predictionPanel">
-      <h2>Prediction</h2>
-      <div class="prediction-grid">
-        <div class="metric"><span>SBP</span><strong id="sbp">--</strong><small>mmHg</small></div>
-        <div class="metric"><span>DBP</span><strong id="dbp">--</strong><small>mmHg</small></div>
-        <div class="metric"><span>MAP</span><strong id="map">--</strong><small>mmHg</small></div>
-        <div class="metric"><span>Pulse Pressure</span><strong id="pp">--</strong><small>mmHg</small></div>
+  <!-- 2. Input Validation Section -->
+  <section class="panel" id="validationPanel" style="display:none;">
+    <h2>2. Input Validation</h2>
+    <div id="validationContent"></div>
+  </section>
+
+  <!-- 3. Signal Processing Stages -->
+  <section class="panel">
+    <h2>3. Processing Pipeline</h2>
+    <div class="section-title" style="margin-bottom:10px;">Signal quality &amp; processing stages</div>
+    <ul class="stage-list" id="stagesList"></ul>
+    <div id="qualityBox" class="status-box info" style="margin-top:12px;"></div>
+  </section>
+
+  <!-- 4. Waveform Visualization -->
+  <section class="panel">
+    <h2>4. Signal Waveforms</h2>
+    <div class="section-title">Raw &rarr; filtered PPG, then first (vPPG) and second (aPPG) derivatives</div>
+    <div class="charts-grid">
+      <div class="chart-box"><h3>Raw PPG</h3><canvas id="cRaw"></canvas></div>
+      <div class="chart-box"><h3>Filtered PPG</h3><canvas id="cFiltered"></canvas></div>
+      <div class="chart-box"><h3>vPPG (1st derivative)</h3><canvas id="cVppg"></canvas></div>
+      <div class="chart-box"><h3>aPPG (2nd derivative)</h3><canvas id="cAppg"></canvas></div>
+    </div>
+  </section>
+
+  <!-- Signal-to-image spectrograms -->
+  <section class="panel" id="imagesPanel" style="display:none;">
+    <h2>5. Signal-to-Image Representations</h2>
+    <p class="muted">STFT spectrograms fed to ResNet-50 (PPG / vPPG / aPPG). These are model-derived visualizations.</p>
+    <div class="image-grid" id="imagesGrid"></div>
+  </section>
+
+  <!-- 6. Estimated Results -->
+  <section class="panel" id="resultsPanel" style="display:none;">
+    <h2>6. Estimated Blood Pressure</h2>
+    <div class="results-hero">
+      <div class="results-card navy">
+        <h3>Systolic (SBP)</h3>
+        <div class="big" id="sbpBig">--</div>
+        <div class="unit">mmHg</div>
       </div>
-      <div class="meta-row">
-        <span id="modeText">Mode: --</span>
-        <span id="sourceText">Source: --</span>
-        <span id="confidenceText">Confidence: --</span>
-        <span id="categoryText">Category: --</span>
+      <div class="results-card cherry">
+        <h3>Diastolic (DBP)</h3>
+        <div class="big" id="dbpBig">--</div>
+        <div class="unit">mmHg</div>
       </div>
-      <div class="disclaimer" id="disclaimer"></div>
-    </section>
-
-    <section class="panel" id="stagesPanel">
-      <h2>Pipeline Stages</h2>
-      <ul class="stage-list" id="stages"></ul>
-    </section>
-
-    <section class="panel">
-      <h2>Extracted Features</h2>
-      <div class="feature-grid" id="features"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Signal Forms</h2>
-      <div class="charts-grid">
-        <div class="chart-box"><h3>Raw PPG</h3><canvas id="cRaw"></canvas></div>
-        <div class="chart-box"><h3>Filtered PPG</h3><canvas id="cFiltered"></canvas></div>
-        <div class="chart-box"><h3>vPPG</h3><canvas id="cVppg"></canvas></div>
-        <div class="chart-box"><h3>aPPG</h3><canvas id="cAppg"></canvas></div>
+      <div class="results-card ok" style="flex:0.9;">
+        <h3>MAP</h3>
+        <div class="big" id="mapBig">--</div>
+        <div class="unit">mmHg</div>
       </div>
-    </section>
+    </div>
+    <div class="metric-grid">
+      <div class="metric navy"><div class="k">Pulse Pressure</div><div class="v" id="ppBig">--</div><div class="sub">mmHg</div></div>
+      <div class="metric"><div class="k">Model Status</div><div class="v" id="modelStatusBig">--</div><div class="sub">trained / demo</div></div>
+      <div class="metric ok"><div class="k">Signal Quality</div><div class="v" id="qualityBig">--</div><div class="sub">score</div></div>
+      <div class="metric"><div class="k">Samples / Duration</div><div class="v" id="samplesBig">--</div><div class="sub">@ fs Hz</div></div>
+    </div>
+    <div class="meta-row" style="margin-bottom:8px;">
+      <strong id="reliabilityText">--</strong>
+    </div>
+    <p class="muted" id="predictionNote" style="margin-top:8px;"></p>
+    <div class="disclaimer">
+      <strong>AI estimate &mdash; not a medical measurement.</strong>
+      This blood-pressure value is produced by an AI model from a PPG signal. It is not a confirmed
+      blood-pressure reading and must not be used to diagnose or treat any condition. Confirm with a
+      validated blood-pressure cuff and consult a qualified healthcare professional.
+    </div>
+  </section>
 
-    <section class="panel">
-      <h2>Signal-to-Image (STFT Spectrograms)</h2>
-      <div class="image-grid" id="images"></div>
-    </section>
+  <!-- 7. Model Evaluation -->
+  <section class="panel" id="evalPanel" style="display:none;">
+    <h2>7. Model Evaluation (held-out test set)</h2>
+    <p class="muted">Evaluation performed on held-out test data with participant-level split (no leakage). Offline dataset evaluation only &mdash; not clinical validation.</p>
+    <div class="grid-2" id="evalGrid"></div>
+    <table id="evalTable" style="margin-top:12px;"></table>
+    <p class="muted" id="evalNote" style="margin-top:10px;"></p>
+  </section>
 
-    <section class="panel">
-      <h2>Attention (MHCA)</h2>
-      <div id="attention" class="table-wrap"></div>
-    </section>
+  <!-- 8. Dietary Guidance -->
+  <section class="panel" id="dietaryPanel">
+    <h2>8. General Dietary &amp; Lifestyle Guidance</h2>
+    <p class="muted">Educational suggestions only. Not a therapeutic diet; not calculated from your BP estimate.</p>
+    <div class="grid-2">
+      <div style="background:#fafafa;border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div style="font-weight:800;color:var(--navy);margin-bottom:8px;">Suggested heart-healthy choices</div>
+        <ul style="margin:0;padding-left:18px;color:var(--ink);font-size:14px;">
+          <li>Vegetables &amp; fruits (plenty, varied)</li>
+          <li>Whole grains &mdash; brown rice, whole-wheat chapati, oats</li>
+          <li>Pulses &amp; legumes &mdash; lentils, chickpeas, beans</li>
+          <li>Suitable protein sources (fish, egg, pulses)</li>
+          <li>Unsalted nuts, in moderation</li>
+          <li>Reduce excess sodium &amp; highly processed foods</li>
+        </ul>
+      </div>
+      <div style="background:#fafafa;border:1px solid var(--border);border-radius:12px;padding:16px;">
+        <div style="font-weight:800;color:var(--navy);margin-bottom:8px;">Indian / South Indian examples</div>
+        <ul style="margin:0;padding-left:18px;color:var(--ink);font-size:14px;">
+          <li>Idli with sambar</li>
+          <li>Vegetable-rich meals</li>
+          <li>Sundal</li>
+          <li>Whole-grain foods</li>
+          <li>Suitable fruit portions</li>
+        </ul>
+      </div>
+    </div>
+    <div class="disclaimer" style="margin-top:14px;">
+      No specific food can treat or cure high blood pressure. For medical conditions, pregnancy, or
+      prescribed diets, consult a qualified healthcare professional or dietitian.
+    </div>
+  </section>
 
-    <footer class="footer">
-      <p>Demo data is synthetic. Not a medical device. For research/academic prototype use only.</p>
-    </footer>
+  <!-- 9. Project Information -->
+  <section class="panel" id="infoPanel">
+    <h2>Project Information</h2>
+    <table style="margin-top:10px;">
+      <tr><th style="width:30%;">Item</th><th>Details</th></tr>
+      <tr><td><strong>Title</strong></td><td>An Intelligent Framework for Cuffless Blood Pressure Estimation</td></tr>
+      <tr><td><strong>Phase</strong></td><td>Phase 1 &mdash; software-only prototype (no hardware sensors)</td></tr>
+      <tr><td><strong>Dataset</strong></td><td>Public PPG-based-BP-assessment dataset (56 subjects, 100 Hz, reference SBP/DBP)</td></tr>
+      <tr><td><strong>Model</strong></td><td>ResNet-50 + Multi-Head Cross-Attention &rarr; SBP/DBP regression head</td></tr>
+      <tr><td><strong>Preprocessing</strong></td><td>Butterworth band-pass (0.5&ndash;5 Hz), PPG/vPPG/aPPG, STFT spectrograms</td></tr>
+      <tr><td><strong>Stack</strong></td><td>FastAPI + PyTorch backend; HTML/CSS/JS + Chart.js frontend</td></tr>
+      <tr><td><strong>Status</strong></td><td><span id="datasetStatus">Loading&hellip;</span></td></tr>
+    </table>
+  </section>
+
+  <!-- 11. Medical limitations & disclaimer -->
+  <section class="panel">
+    <h2>11. Limitations &amp; Medical Disclaimer</h2>
+    <div class="disclaimer">
+      <strong>Not a medical device.</strong> This is a research/academic software prototype. It does not
+      measure blood pressure clinically, does not diagnose hypertension or hypotension, and does not
+      recommend medication changes. Always confirm with a validated cuff and a qualified healthcare professional.
+      Results may not generalise beyond the single public dataset used for offline evaluation.
+    </div>
+    <p class="muted" style="margin-top:8px;">Phase 1 restrictions: no Arduino/ESP32/Raspberry Pi sensors, no live streaming, no wearables, no clinical deployment.</p>
+  </section>
+
+  <footer>
+    Cuffless Blood Pressure Estimation &mdash; Research Prototype &bull; Not for clinical use
+  </footer>
+
+</div>
+
+<!-- ==================== BP CARE AI ASSISTANT ==================== -->
+<div class="assistant-wrap" id="assistantWrap">
+  <button class="assistant-btn" id="assistantBtn" aria-label="Open BP Care AI Assistant" title="BP Care AI Assistant">
+    <span class="face">&#128520;</span>
+    <span class="pulse"></span>
+  </button>
+
+  <div class="assistant-panel" id="assistantPanel" aria-label="BP Care AI Assistant chat">
+    <div class="assistant-header">
+      <div class="title"><span class="face">&#128520;</span>BP Care AI Assistant</div>
+      <span class="badge" id="assistantStatusBadge">idle</span>
+      <button class="assistant-close" id="assistantClose" aria-label="Close assistant">&times;</button>
+    </div>
+    <div class="assistant-chat" id="assistantChat"></div>
+    <div class="suggested" id="assistantSuggested">
+      <button onclick="assistantAsk('Explain my blood pressure result')">Explain my result</button>
+      <button onclick="assistantAsk('What should I eat for lunch?')">Lunch ideas</button>
+      <button onclick="assistantAsk('How can I reduce salt?')">Reduce salt</button>
+      <button onclick="assistantAsk('General lifestyle tips')">Lifestyle tips</button>
+    </div>
+    <div class="assistant-input">
+      <input id="assistantInput" placeholder="Ask about your results, meals, salt&hellip;" />
+      <button id="assistantSend" aria-label="Send">Send</button>
+    </div>
+    <div class="assistant-panel discreet" id="assistantDisclaimer">
+      AI assistant &mdash; educational guidance only, not medical advice.
+    </div>
   </div>
+</div>
 
-  <script src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

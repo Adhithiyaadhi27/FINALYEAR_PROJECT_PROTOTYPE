@@ -23,3 +23,8 @@ Thumbs.db
 # Misc
 *.docx
 ~$*
+
+# Generated model weights / data (re-create via dataset_prepare.py & train_model.py)
+*.pth
+backend/data/
+backend/models/*.pth

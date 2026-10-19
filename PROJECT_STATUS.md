@@ -3,61 +3,61 @@
 
 ## Project Goal
 
-This prototype processes a PPG signal and estimates systolic and diastolic blood pressure (SBP/DBP). It is a research prototype, not a medical device.
+Software-only prototype that accepts manually supplied PPG data, estimates
+systolic/diastolic blood pressure using a trained ResNet-50 + Multi-Head
+Cross-Attention model, visualises signals, and provides an animated BP Care
+AI Assistant for explaining results and offering safe dietary/lifestyle guidance.
 
-## Completed
+## Completed (Phase 1)
 
-- FastAPI backend and browser-based HTML/CSS/JavaScript frontend are in place.
-- The backend health check and synthetic demo prediction route were tested successfully.
-- The CSV upload route was tested with a generated numeric signal: 299 samples at 125 Hz (about 2.4 seconds).
-- The upload response completed the signal-processing pipeline, including band-pass filtering, PPG/vPPG/aPPG generation, feature-image creation, model feature extraction/attention, and results generation.
-- The frontend code includes controls for running the demo and uploading a signal file, and displays signal plots, processing stages, features, images, attention, and prediction results.
-- Python dependencies from `backend/requirements.txt` are installed in the current environment.
+- FastAPI backend + HTML/CSS/JS frontend in place (existing components preserved)
+- Public dataset selected, downloaded, verified: **PPG-based-BP-assessment** —
+  56 subjects, 2-min PPG at 100 Hz, reference SBP/DBP mmHg, participant IDs
+  (`backend/data/ppg_bp_dataset/`, `metadata.csv`, `splits.json`)
+- Signal preprocessing pipeline: input validation, missing-value/insufficient-sample
+  detection, invalid-fs detection, Butterworth band-pass (0.5–5 Hz), PPG/vPPG/aPPG
+- Signal quality assessment: amplitude, SNR, pulse regularity, morphology
+  (good / needs_attention / insufficient)
+- Genuine **Multi-Head Cross-Attention** implemented (PPG queries attend over
+  vPPG/aPPG context) — replaces previous self-attention
+- ResNet-50 feature extraction (ImageNet backbone, frozen)
+- Model trained (backbone frozen; projection + MHCA + head trained), weights saved
+  to `backend/models/resnet_mhca_bp.pth`
+- Held-out test evaluation: SBP MAE 14.75 / DBP MAE 11.88 mmHg
+  (`backend/models/evaluation_results.json`)
+- Backend endpoints: `/api/health`, `/api/predict` (multipart file),
+  `/api/predict/json` (manual signal), `/api/demo`, `/api/evaluate`,
+  `/api/evaluate/full`, `/api/assistant`, `/api/dietary`
+- Frontend redesigned: white background, deep navy + cherry-red accents,
+  responsive dashboard, Chart.js waveforms, SBP/DBP cards, model evaluation,
+  dietary guidance, limitations/disclaimer
+- Animated **BP Care AI Assistant**: avatar with blinking, typing indicator,
+  expandable chat, suggested questions, minimize/close, mobile layout,
+  reduced-motion support; auto-opens after a valid prediction; reads real SBP/DBP
+- Automated tests (`backend/tests/test_api.py`): 19/19 passing
+- README, ARCHITECTURE, PROJECT_AUDIT documentation
 
-## Current Limitations
+## Current prediction status
 
-- The CSV test used a generated signal, not data from a physical PPG sensor or a person.
-- The app accepts uploaded files; direct MAX30102-to-app acquisition has not been implemented or tested.
-- The test CSV was short. It verified the route and processing path, not the quality of a full-length recording.
-- Trained ResNet-50 + MHCA blood-pressure weights are not present. The app therefore reports a calibrated demo estimate; this is not a validated BP measurement.
-- The browser interface has not yet been verified end-to-end in a browser with an uploaded file.
-- There is no collected, labeled dataset or reported model-accuracy validation yet.
+The app runs in **trained** mode with real weights. Predictions come from the
+trained ResNet-50 + MHCA regression head and are clearly labelled as AI estimates
+(not confirmed medical measurements). When weights are absent it falls back to a
+clearly-labelled demo calibrated estimator.
 
-## What the Student Should Do
+## Remaining limitations (documented)
 
-1. Decide on and obtain the hardware: MAX30102 PPG module and an ESP32 or Arduino board. Check that the module provides raw optical samples, not only a displayed heart-rate value.
-2. Wire the sensor to the board using the module's documented voltage and I2C connections.
-3. Record raw PPG samples while keeping the finger still and sensor contact consistent. Aim for a 20-second recording and record the actual sampling rate.
-4. Save a CSV with a header and one numeric PPG sample per row, for example:
+- Offline dataset evaluation only; not clinical validation
+- Single public dataset; may not generalise to other populations/devices
+- MAE ~14.8 (SBP) / ~11.9 (DBP) on held-out test data — prototype-grade, not diagnostic
+- No hardware sensor integration (Phase 1 restriction)
+- Assistant is rule-based/educational, not a medical professional
 
-   ```csv
-   ppg
-   12345
-   12360
-   12341
-   ```
+## Demonstration instructions
 
-   The current parser treats every number in the file as a signal sample. Do not include numeric timestamps or BP labels in this signal CSV; keep those in a separate record for now.
-5. If collecting human data, get informed consent, use anonymous participant IDs, store data securely, and follow the institution's ethics/supervisor requirements. Record a reference BP from a validated cuff at the same session, with appropriate supervision.
-6. Share a sample sensor CSV and its actual sampling rate so the upload can be tested against real sensor data.
-
-## Remaining Project Work
-
-- Verify the browser upload workflow and charts using a CSV file.
-- Implement or select a reliable way to save sensor readings from the chosen microcontroller as CSV.
-- Check signal quality, missing samples, sample rate, and recording duration on real sensor recordings.
-- Build a consented dataset pairing PPG recordings with reference cuff SBP/DBP labels, following supervisor and ethics guidance.
-- Train the model using a documented training/validation/test split and report suitable error metrics against reference measurements.
-- Load the trained weights into the app and verify that it switches from demo mode to trained mode.
-- Clearly label all outputs as experimental and not for diagnosis or treatment.
-
-## Recommended Order
-
-1. Obtain the sensor and microcontroller, then collect one test recording.
-2. Confirm the recording format and sampling rate; upload it and inspect the displayed waveforms and processing stages.
-3. Only after the capture path is reliable, collect appropriately consented, cuff-labeled data.
-4. Train and evaluate the model; integrate weights only after the evaluation is documented.
-
-## Current Prediction Status
-
-The upload route works for numeric CSV input, but a successful response only confirms that the software pipeline ran. Until trained weights and independent validation data are available, its BP numbers must be treated as demo output, not real or clinically reliable blood pressure.
+1. `cd backend && pip install -r requirements.txt`
+2. `python dataset_prepare.py`  (downloads dataset)
+3. `python train_model.py`      (trains + saves weights + evaluation)
+4. `uvicorn main:app --reload --port 8000`
+5. Open http://127.0.0.1:8000/ui/
+6. Upload a PPG CSV/TXT or paste samples, set fs, run estimation
+7. View SBP/DBP results, waveforms, quality, evaluation; BP Care AI Assistant opens automatically
