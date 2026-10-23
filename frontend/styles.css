@@ -1,6 +1,6 @@
 /* Cuffless Blood Pressure Estimation - Frontend Styles
  *
- * Design: white background, deep navy + cherry-red accents,
+ * Design: background image with deep navy + cherry-red accents,
  * clean typography, rounded cards, subtle shadows, responsive.
  * Supports reduced-motion via prefers-reduced-motion.
  */
@@ -46,7 +46,14 @@ html {
 body {
   margin: 0;
   font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  background: var(--bg);
+  background-color: var(--bg);
+  /* Prototype background image (with soft light overlay for text readability) */
+  background-image: linear-gradient(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.93)),
+    url("../images/bg.jpg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  background-attachment: fixed;
   color: var(--ink);
   line-height: 1.55;
 }
